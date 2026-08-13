@@ -1,0 +1,11 @@
+﻿__pycache__/
+*.pyc
+
+build/
+dist/
+
+*.shotproj.json
+
+.vscode/
+.idea/
+
