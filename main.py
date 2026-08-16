@@ -1,5 +1,4 @@
 import sys
-import json
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl, QSize
@@ -741,10 +740,6 @@ class ShotBreakdownAssistant(
 
                 break
 
-            seconds = (
-                time_ms / 1000
-            )
-
             output_file = (
                 self.thumbnail_dir
                 / f"{index:05d}.jpg"
@@ -1398,10 +1393,7 @@ class ShotBreakdownAssistant(
                 path
             )
 
-            video_path = data.get(
-                "video_path",
-                ""
-            )
+            video_path = data["video_path"]
 
             if not Path(
                 video_path
@@ -1424,29 +1416,10 @@ class ShotBreakdownAssistant(
             self.video_path = video_path
 
             self.interval_spin.setValue(
-
-                int(
-                    data.get(
-                        "interval_seconds",
-                        3
-                    )
-                )
-
+                data["interval_seconds"]
             )
 
-            self.shots = [
-
-                Shot.from_dict(
-                    item
-                )
-
-                for item
-                in data.get(
-                    "shots",
-                    []
-                )
-
-            ]
+            self.shots = data["shots"]
 
             self.player.setSource(
 

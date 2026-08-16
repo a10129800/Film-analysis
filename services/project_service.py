@@ -1,6 +1,5 @@
-﻿from pathlib import Path
-
-from core.project import save_project, load_project
+﻿from core.project import save_project, load_project
+from core.shot import Shot
 
 
 class ProjectService:
@@ -20,6 +19,29 @@ class ProjectService:
         )
 
     def load(self, load_path):
-        return load_project(
+
+        data = load_project(
             load_path
         )
+
+        shots = [
+            Shot.from_dict(item)
+            for item in data.get(
+                "shots",
+                []
+            )
+        ]
+
+        return {
+            "video_path": data.get(
+                "video_path",
+                ""
+            ),
+            "interval_seconds": int(
+                data.get(
+                    "interval_seconds",
+                    3
+                )
+            ),
+            "shots": shots
+        }
