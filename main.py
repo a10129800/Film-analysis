@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import json
 from pathlib import Path
 
@@ -29,6 +29,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from services.video_service import VideoService
 from services.thumbnail_service import ThumbnailService
 from services.project_service import ProjectService
+from services.shot_service import ShotService
 
 
 APP_NAME = "🎬 拉片助手 v1.2"
@@ -149,6 +150,8 @@ class ShotBreakdownAssistant(
         )
 
         self.project_service = ProjectService()
+
+        self.shot_service = ShotService()
 
         self.build_ui()
 
@@ -1149,9 +1152,10 @@ class ShotBreakdownAssistant(
 
             return
 
-        self.shots[index].note = (
-            self.note_editor
-            .toPlainText()
+        self.shot_service.update_note(
+            self.shots,
+            index,
+            self.note_editor.toPlainText()
         )
 
         self.refresh_shot_list()
@@ -1180,15 +1184,9 @@ class ShotBreakdownAssistant(
             self.player.position()
         )
 
-        self.shots.append(
-            Shot(
-                current_time
-            )
-        )
-
-        self.shots.sort(
-            key=lambda shot:
-            shot.time_ms
+        self.shot_service.add_shot(
+            self.shots,
+            current_time
         )
 
         self.refresh_shot_list()
@@ -1219,7 +1217,8 @@ class ShotBreakdownAssistant(
 
             return
 
-        self.shots.pop(
+        self.shot_service.delete_shot(
+            self.shots,
             row
         )
 
