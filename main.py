@@ -1,6 +1,5 @@
 ﻿import sys
 import json
-import subprocess
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl, QSize
@@ -624,54 +623,8 @@ class ShotBreakdownAssistant(
         )
 
     # =========================================================
-    # FFmpeg
+    # 產生縮圖
     # =========================================================
-
-    def get_ffmpeg_path(self):
-
-        candidates = [
-
-            Path(__file__).resolve()
-            .parent
-            / "ffmpeg"
-            / "ffmpeg.exe",
-
-            Path.cwd()
-            / "ffmpeg"
-            / "ffmpeg.exe",
-
-        ]
-
-        for path in candidates:
-
-            if path.exists():
-
-                return path
-
-        return None
-
-    def get_ffprobe_path(self):
-
-        candidates = [
-
-            Path(__file__).resolve()
-            .parent
-            / "ffmpeg"
-            / "ffprobe.exe",
-
-            Path.cwd()
-            / "ffmpeg"
-            / "ffprobe.exe",
-
-        ]
-
-        for path in candidates:
-
-            if path.exists():
-
-                return path
-
-        return None
 
     # =========================================================
     # 開啟影片
@@ -683,15 +636,11 @@ class ShotBreakdownAssistant(
 
             self,
 
-            "選擇影片",
+            "開啟影片",
 
             "",
 
-            (
-                "影片 (*.mp4 *.mkv *.mov "
-                "*.avi *.webm *.m4v);;"
-                "所有檔案 (*.*)"
-            ),
+            "影片檔案 (*.mp4 *.mov *.mkv *.avi *.wmv *.m4v)"
 
         )
 
@@ -699,33 +648,59 @@ class ShotBreakdownAssistant(
 
             return
 
-        self.video_path = path
+        try:
 
-        self.player.setSource(
-            QUrl.fromLocalFile(
-                path
+            self.video_path = path
+
+            self.shots.clear()
+
+            self.current_shot_index = -1
+
+            self.thumbnail_dir = None
+
+            self.note_editor.clear()
+
+            self.player.setSource(
+
+                QUrl.fromLocalFile(
+                    self.video_path
+                )
+
             )
-        )
 
-        self.video_name_label.setText(
-            Path(path).name
-        )
+            self.video_name_label.setText(
 
-        self.shots.clear()
+                Path(
+                    self.video_path
+                ).name
 
-        self.current_shot_index = -1
+            )
 
-        self.clear_thumbnail_widgets()
+            self.thumbnail_count_label.setText(
+                "尚未產生縮圖"
+            )
 
-        self.refresh_shot_list()
+            self.refresh_shot_list()
 
-        self.statusBar().showMessage(
-            "影片已開啟"
-        )
+            self.refresh_thumbnail_timeline()
 
-    # =========================================================
-    # 產生縮圖
-    # =========================================================
+            self.statusBar().showMessage(
+                "影片已開啟"
+            )
+
+        except Exception as error:
+
+            QMessageBox.critical(
+
+                self,
+
+                APP_NAME,
+
+                "開啟影片失敗：\n\n"
+                + repr(error)
+
+            )
+
 
     def generate_thumbnails(self):
 
@@ -735,20 +710,6 @@ class ShotBreakdownAssistant(
                 self,
                 APP_NAME,
                 "請先開啟影片。"
-            )
-
-            return
-
-        ffmpeg = self.get_ffmpeg_path()
-
-        if ffmpeg is None:
-
-            QMessageBox.critical(
-                self,
-                APP_NAME,
-                "找不到 FFmpeg。\n\n"
-                "請確認：\n"
-                "ffmpeg\\ffmpeg.exe"
             )
 
             return
