@@ -29,6 +29,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from services.video_service import VideoService
 from services.thumbnail_service import ThumbnailService
+from services.project_service import ProjectService
 
 
 APP_NAME = "🎬 拉片助手 v1.2"
@@ -147,6 +148,8 @@ class ShotBreakdownAssistant(
         self.thumbnail_service = ThumbnailService(
             self.video_service
         )
+
+        self.project_service = ProjectService()
 
         self.build_ui()
 
@@ -1426,43 +1429,14 @@ class ShotBreakdownAssistant(
 
         try:
 
-            data = {
-
-                "version": 12,
-
-                "video_path":
-                    self.video_path,
-
-                "interval_seconds":
-                    self.interval_spin.value(),
-
-                "shots":
-                    [
-                        shot.to_dict()
-                        for shot
-                        in self.shots
-                    ],
-
-            }
-
-            json_text = json.dumps(
-                data,
-                ensure_ascii=False,
-                indent=2
-            )
-
             save_path = Path(path)
 
-            save_path.write_text(
-                json_text,
-                encoding="utf-8"
+            self.project_service.save(
+                self.video_path,
+                self.interval_spin.value(),
+                self.shots,
+                save_path
             )
-
-            if not save_path.exists():
-
-                raise RuntimeError(
-                    "write_text 執行完成，但找不到輸出的檔案。"
-                )
 
             QMessageBox.information(
 
@@ -1516,12 +1490,8 @@ class ShotBreakdownAssistant(
 
         try:
 
-            data = json.loads(
-
-                Path(path).read_text(
-                    encoding="utf-8"
-                )
-
+            data = self.project_service.load(
+                path
             )
 
             video_path = data.get(
