@@ -1,4 +1,4 @@
-class Shot:
+﻿class Shot:
 
     def __init__(
         self,
@@ -21,8 +21,6 @@ class Shot:
             "shot_size": self.shot_size,
         }
 
-    
-
     @staticmethod
     def from_dict(data):
 
@@ -32,64 +30,3 @@ class Shot:
             data.get("thumbnail", ""),
             data.get("shot_size", ""),
         )
-
-
-class ThumbnailButton(QPushButton):
-
-    def __init__(
-        self,
-        shot_index,
-        shot,
-        parent=None
-    ):
-
-        super().__init__(parent)
-
-        self.shot_index = shot_index
-        self.shot = shot
-
-        self.setFixedSize(
-            190,
-            145
-        )
-
-        self.setCursor(
-            Qt.PointingHandCursor
-        )
-
-        self.setToolTip(
-            f"SHOT {shot_index + 1:03d}\n"
-            f"{format_time(shot.time_ms)}"
-        )
-
-
-class ShotBreakdownAssistant(
-    QMainWindow
-):
-
-    def __init__(self):
-
-        super().__init__()
-
-        self.setWindowTitle(
-            APP_NAME
-        )
-
-        self.resize(
-            1400,
-            850
-        )
-
-        self.video_path = ""
-
-        self.duration_ms = 0
-
-        self.shots = []
-
-        self.current_shot_index = -1
-
-        self.thumbnail_dir = None
-
-        self.build_ui()
-
-        self.setup_player()

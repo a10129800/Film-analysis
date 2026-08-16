@@ -30,61 +30,12 @@ from services.video_service import VideoService
 from services.thumbnail_service import ThumbnailService
 from services.project_service import ProjectService
 from services.shot_service import ShotService
+from services.obsidian_service import ObsidianService
+from core.shot import Shot
+from core.time import format_time
 
 
 APP_NAME = "🎬 拉片助手 v1.2"
-
-
-def format_time(ms):
-    ms = max(0, int(ms))
-
-    hours = ms // 3600000
-    minutes = (ms % 3600000) // 60000
-    seconds = (ms % 60000) // 1000
-    milliseconds = ms % 1000
-
-    return (
-        f"{hours:02d}:"
-        f"{minutes:02d}:"
-        f"{seconds:02d}."
-        f"{milliseconds:03d}"
-    )
-
-
-class Shot:
-
-    def __init__(
-        self,
-        time_ms,
-        note="",
-        thumbnail="",
-        shot_size=""
-    ):
-        self.time_ms = int(time_ms)
-        self.note = note
-        self.thumbnail = thumbnail
-        self.shot_size = shot_size
-
-    def to_dict(self):
-
-        return {
-            "time_ms": self.time_ms,
-            "note": self.note,
-            "thumbnail": self.thumbnail,
-            "shot_size": self.shot_size,
-        }
-
-    
-
-    @staticmethod
-    def from_dict(data):
-
-        return Shot(
-            data.get("time_ms", 0),
-            data.get("note", ""),
-            data.get("thumbnail", ""),
-            data.get("shot_size", ""),
-        )
 
 
 class ThumbnailButton(QPushButton):
@@ -152,6 +103,8 @@ class ShotBreakdownAssistant(
         self.project_service = ProjectService()
 
         self.shot_service = ShotService()
+
+        self.obsidian_service = ObsidianService()
 
         self.build_ui()
 
@@ -1626,83 +1579,24 @@ class ShotBreakdownAssistant(
 
             return
 
-        title = Path(
-            self.video_path
-        ).stem
+        try:
 
-        lines = []
-
-        lines.append(
-            f"# {title} — 拉片"
-        )
-
-        lines.append("")
-
-        lines.append(
-            f"> 來源影片："
-            f"`{Path(self.video_path).name}`"
-        )
-
-        lines.append("")
-
-        for index, shot in enumerate(
-            self.shots,
-            start=1
-        ):
-
-            lines.append(
-                f"## SHOT {index:03d}"
+            self.obsidian_service.export_markdown(
+                self.video_path,
+                self.shots,
+                path
             )
 
-            lines.append("")
+        except Exception as error:
 
-            lines.append(
-                f"**時間：** "
-                f"{format_time(shot.time_ms)}"
+            QMessageBox.critical(
+                self,
+                APP_NAME,
+                "Obsidian Markdown 匯出失敗：\n\n"
+                + repr(error)
             )
 
-            lines.append("")
-
-            if shot.thumbnail:
-
-                lines.append(
-                    f"**縮圖：** "
-                    f"`{Path(shot.thumbnail).name}`"
-                )
-
-                lines.append("")
-
-            lines.append(
-                "### 我的觀察"
-            )
-
-            lines.append("")
-
-            if shot.note.strip():
-
-                lines.append(
-                    shot.note.strip()
-                )
-
-            else:
-
-                lines.append(
-                    "（尚未填寫）"
-                )
-
-            lines.append("")
-
-            lines.append("---")
-
-            lines.append("")
-
-        Path(path).write_text(
-
-            "\n".join(lines),
-
-            encoding="utf-8"
-
-        )
+            return
 
         QMessageBox.information(
 
