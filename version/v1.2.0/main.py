@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import json
 import subprocess
 from pathlib import Path
@@ -27,8 +27,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
+from services.video_service import VideoService
+from services.thumbnail_service import ThumbnailService
 
-APP_NAME = "🎬 拉片助手 v1.1"
+
+APP_NAME = "🎬 拉片助手 v1.2"
 
 
 def format_time(ms):
@@ -138,6 +141,12 @@ class ShotBreakdownAssistant(
         self.current_shot_index = -1
 
         self.thumbnail_dir = None
+
+        self.video_service = VideoService()
+
+        self.thumbnail_service = ThumbnailService(
+            self.video_service
+        )
 
         self.build_ui()
 
@@ -757,34 +766,20 @@ class ShotBreakdownAssistant(
             * 1000
         )
 
-        video_file = Path(
-            self.video_path
-        )
-
         self.thumbnail_dir = (
-            video_file.parent
-            / f".shotbreakdown_{video_file.stem}"
-            / "thumbnails"
-        )
-
-        self.thumbnail_dir.mkdir(
-            parents=True,
-            exist_ok=True
+            self.thumbnail_service.prepare_thumbnail_dir(
+                self.video_path
+            )
         )
 
         # -----------------------------------------------------
         # 清除舊資料
         # -----------------------------------------------------
 
-        for old_file in self.thumbnail_dir.glob(
-            "*.jpg"
-        ):
+        self.thumbnail_service.clear_thumbnails(
+            self.thumbnail_dir
+        )
 
-            try:
-                old_file.unlink()
-
-            except Exception:
-                pass
 
         self.shots.clear()
 
@@ -835,48 +830,21 @@ class ShotBreakdownAssistant(
                 / f"{index:05d}.jpg"
             )
 
-            command = [
-
-                str(ffmpeg),
-
-                "-y",
-
-                "-ss",
-                str(seconds),
-
-                "-i",
-                self.video_path,
-
-                "-frames:v",
-                "1",
-
-                "-vf",
-                (
-                    "scale="
-                    "320:-2"
-                ),
-
-                "-q:v",
-                "3",
-
-                str(output_file),
-
-            ]
-
             try:
 
-                result = subprocess.run(
+                self.video_service.generate_thumbnail(
+                    self.video_path,
+                    time_ms,
+                    output_file
+                )
 
-                    command,
-
-                    stdout=subprocess.PIPE,
-
-                    stderr=subprocess.PIPE,
-
-                    creationflags=(
-                        subprocess.CREATE_NO_WINDOW
+                self.shots.append(
+                    Shot(
+                        time_ms,
+                        thumbnail=str(
+                            output_file
+                        )
                     )
-
                 )
 
             except Exception as error:
@@ -892,10 +860,6 @@ class ShotBreakdownAssistant(
 
                 return
 
-            if (
-                result.returncode == 0
-                and output_file.exists()
-            ):
 
                 self.shots.append(
                     Shot(
@@ -1073,15 +1037,9 @@ class ShotBreakdownAssistant(
 
         if self.thumbnail_dir.exists():
 
-            for file in self.thumbnail_dir.glob(
-                "*.jpg"
-            ):
-
-                try:
-                    file.unlink()
-
-                except Exception:
-                    pass
+            self.thumbnail_service.clear_thumbnails(
+                self.thumbnail_dir
+            )
 
         self.clear_thumbnail_widgets()
 
@@ -1856,3 +1814,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+

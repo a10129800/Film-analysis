@@ -1,8 +1,10 @@
-import sys
+﻿import sys
 import json
+import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QSize
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -19,16 +21,20 @@ from PySide6.QtWidgets import (
     QSplitter,
     QMessageBox,
     QFileDialog,
+    QScrollArea,
+    QProgressDialog,
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
+from services.video_service import VideoService
+from services.thumbnail_service import ThumbnailService
 
-APP_NAME = "🎬 拉片助手 v1"
+
+APP_NAME = "🎬 拉片助手 v1.2"
 
 
 def format_time(ms):
-    """毫秒 → HH:MM:SS.mmm"""
     ms = max(0, int(ms))
 
     hours = ms // 3600000
@@ -36,45 +42,114 @@ def format_time(ms):
     seconds = (ms % 60000) // 1000
     milliseconds = ms % 1000
 
-    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+    return (
+        f"{hours:02d}:"
+        f"{minutes:02d}:"
+        f"{seconds:02d}."
+        f"{milliseconds:03d}"
+    )
 
 
 class Shot:
-    """代表一個拉片時間點"""
 
-    def __init__(self, time_ms, note=""):
+    def __init__(
+        self,
+        time_ms,
+        note="",
+        thumbnail="",
+        shot_size=""
+    ):
         self.time_ms = int(time_ms)
         self.note = note
+        self.thumbnail = thumbnail
+        self.shot_size = shot_size
 
     def to_dict(self):
+
         return {
             "time_ms": self.time_ms,
             "note": self.note,
+            "thumbnail": self.thumbnail,
+            "shot_size": self.shot_size,
         }
+
+    
 
     @staticmethod
     def from_dict(data):
+
         return Shot(
             data.get("time_ms", 0),
             data.get("note", ""),
+            data.get("thumbnail", ""),
+            data.get("shot_size", ""),
         )
 
 
-class ShotBreakdownAssistant(QMainWindow):
+class ThumbnailButton(QPushButton):
+
+    def __init__(
+        self,
+        shot_index,
+        shot,
+        parent=None
+    ):
+
+        super().__init__(parent)
+
+        self.shot_index = shot_index
+        self.shot = shot
+
+        self.setFixedSize(
+            190,
+            145
+        )
+
+        self.setCursor(
+            Qt.PointingHandCursor
+        )
+
+        self.setToolTip(
+            f"SHOT {shot_index + 1:03d}\n"
+            f"{format_time(shot.time_ms)}"
+        )
+
+
+class ShotBreakdownAssistant(
+    QMainWindow
+):
 
     def __init__(self):
+
         super().__init__()
 
-        self.setWindowTitle(APP_NAME)
-        self.resize(1280, 800)
+        self.setWindowTitle(
+            APP_NAME
+        )
+
+        self.resize(
+            1400,
+            850
+        )
 
         self.video_path = ""
+
         self.duration_ms = 0
 
         self.shots = []
+
         self.current_shot_index = -1
 
+        self.thumbnail_dir = None
+
+        self.video_service = VideoService()
+
+        self.thumbnail_service = ThumbnailService(
+            self.video_service
+        )
+
         self.build_ui()
+
         self.setup_player()
 
     # =========================================================
@@ -84,69 +159,159 @@ class ShotBreakdownAssistant(QMainWindow):
     def build_ui(self):
 
         central = QWidget()
-        self.setCentralWidget(central)
 
-        main_layout = QVBoxLayout(central)
+        self.setCentralWidget(
+            central
+        )
 
-        # -----------------------------------------------------
-        # 上方工具列
-        # -----------------------------------------------------
+        main_layout = QVBoxLayout(
+            central
+        )
+
+        # =====================================================
+        # 工具列
+        # =====================================================
 
         toolbar = QHBoxLayout()
 
-        self.open_button = QPushButton("🎬 開啟影片")
-        self.open_button.clicked.connect(self.open_video)
+        self.open_button = QPushButton(
+            "🎬 開啟影片"
+        )
 
-        self.new_button = QPushButton("🆕 新專案")
-        self.new_button.clicked.connect(self.new_project)
+        self.open_button.clicked.connect(
+            self.open_video
+        )
 
-        self.save_button = QPushButton("💾 儲存專案")
-        self.save_button.clicked.connect(self.save_project)
+        self.new_button = QPushButton(
+            "🆕 新專案"
+        )
 
-        self.load_button = QPushButton("📂 載入專案")
-        self.load_button.clicked.connect(self.load_project)
+        self.new_button.clicked.connect(
+            self.new_project
+        )
 
-        self.export_button = QPushButton("📤 匯出 Obsidian")
-        self.export_button.clicked.connect(self.export_obsidian)
+        self.save_button = QPushButton(
+            "💾 儲存專案"
+        )
 
-        toolbar.addWidget(self.open_button)
-        toolbar.addWidget(self.new_button)
-        toolbar.addWidget(self.save_button)
-        toolbar.addWidget(self.load_button)
-        toolbar.addWidget(self.export_button)
+        self.save_button.clicked.connect(
+            self.save_project
+        )
+
+        self.load_button = QPushButton(
+            "📂 載入專案"
+        )
+
+        self.load_button.clicked.connect(
+            self.load_project
+        )
+
+        self.export_button = QPushButton(
+            "📤 匯出 Obsidian"
+        )
+
+        self.export_button.clicked.connect(
+            self.export_obsidian
+        )
+
+        toolbar.addWidget(
+            self.open_button
+        )
+
+        toolbar.addWidget(
+            self.new_button
+        )
+
+        toolbar.addWidget(
+            self.save_button
+        )
+
+        toolbar.addWidget(
+            self.load_button
+        )
+
+        toolbar.addWidget(
+            self.export_button
+        )
 
         toolbar.addStretch()
 
-        toolbar.addWidget(QLabel("取樣間隔："))
-
-        self.interval_spin = QSpinBox()
-        self.interval_spin.setRange(1, 300)
-        self.interval_spin.setValue(3)
-        self.interval_spin.setSuffix(" 秒")
-
-        toolbar.addWidget(self.interval_spin)
-
-        self.generate_button = QPushButton("⏱️ 建立時間點")
-        self.generate_button.clicked.connect(
-            self.generate_shots
+        toolbar.addWidget(
+            QLabel("縮圖間隔：")
         )
 
-        toolbar.addWidget(self.generate_button)
+        self.interval_spin = QSpinBox()
 
-        main_layout.addLayout(toolbar)
+        self.interval_spin.setRange(
+            1,
+            60
+        )
 
-        # -----------------------------------------------------
+        self.interval_spin.setValue(
+            3
+        )
+
+        self.interval_spin.setSuffix(
+            " 秒"
+        )
+
+        toolbar.addWidget(
+            self.interval_spin
+        )
+
+        self.generate_button = QPushButton(
+            "🖼️ 產生縮圖"
+        )
+
+        self.generate_button.clicked.connect(
+            self.generate_thumbnails
+        )
+
+        toolbar.addWidget(
+            self.generate_button
+        )
+
+        self.clear_thumbnail_button = QPushButton(
+            "🗑 清除縮圖"
+        )
+
+        self.clear_thumbnail_button.clicked.connect(
+            self.clear_thumbnails
+        )
+
+        toolbar.addWidget(
+            self.clear_thumbnail_button
+        )
+
+        main_layout.addLayout(
+            toolbar
+        )
+
+        # =====================================================
         # 中央區域
+        # =====================================================
+
+        splitter = QSplitter(
+            Qt.Vertical
+        )
+
+        # =====================================================
+        # 上方：影片 + SHOT
+        # =====================================================
+
+        upper_splitter = QSplitter(
+            Qt.Horizontal
+        )
+
         # -----------------------------------------------------
-
-        splitter = QSplitter(Qt.Horizontal)
-
-        # =====================================================
-        # 左側：影片
-        # =====================================================
+        # 影片
+        # -----------------------------------------------------
 
         video_panel = QWidget()
-        video_layout = QVBoxLayout(video_panel)
+
+        video_layout = QVBoxLayout(
+            video_panel
+        )
 
         self.video_widget = QVideoWidget()
 
@@ -155,13 +320,12 @@ class ShotBreakdownAssistant(QMainWindow):
             1
         )
 
-        # -----------------------------------------------------
-        # 播放控制
-        # -----------------------------------------------------
-
         controls = QHBoxLayout()
 
-        self.play_button = QPushButton("▶ 播放")
+        self.play_button = QPushButton(
+            "▶ 播放"
+        )
+
         self.play_button.clicked.connect(
             self.toggle_play
         )
@@ -208,19 +372,22 @@ class ShotBreakdownAssistant(QMainWindow):
             self.video_name_label
         )
 
-        splitter.addWidget(
+        upper_splitter.addWidget(
             video_panel
         )
 
-        # =====================================================
-        # 右側：SHOT
-        # =====================================================
+        # -----------------------------------------------------
+        # SHOT 清單
+        # -----------------------------------------------------
 
         shot_panel = QWidget()
-        shot_layout = QVBoxLayout(shot_panel)
+
+        shot_layout = QVBoxLayout(
+            shot_panel
+        )
 
         shot_layout.addWidget(
-            QLabel("🎞️ 拉片時間點")
+            QLabel("🎞️ SHOT")
         )
 
         self.shot_list = QListWidget()
@@ -233,10 +400,6 @@ class ShotBreakdownAssistant(QMainWindow):
             self.shot_list,
             1
         )
-
-        # -----------------------------------------------------
-        # SHOT 操作
-        # -----------------------------------------------------
 
         shot_buttons = QHBoxLayout()
 
@@ -268,16 +431,58 @@ class ShotBreakdownAssistant(QMainWindow):
             shot_buttons
         )
 
-        # -----------------------------------------------------
-        # 筆記
-        # -----------------------------------------------------
-
         self.shot_label = QLabel(
             "尚未選擇 SHOT"
         )
 
         shot_layout.addWidget(
             self.shot_label
+        )
+
+        # =====================================================
+        # v1.2：景別
+        # =====================================================
+
+        shot_layout.addWidget(
+            QLabel(" 景別")
+        )
+
+        self.shot_size_buttons = []
+
+        shot_size_layout = QHBoxLayout()
+
+        for text in [
+            "大特寫",
+            "特寫",
+            "中景",
+            "全景",
+            "大全景"
+        ]:
+
+            button = QPushButton(
+                text
+            )
+
+            button.setCheckable(
+                True
+            )
+
+            button.clicked.connect(
+                lambda checked=False,
+                value=text:
+                self.set_shot_size(value)
+            )
+
+            self.shot_size_buttons.append(
+                button
+            )
+
+            shot_size_layout.addWidget(
+                button
+            )
+
+        shot_layout.addLayout(
+            shot_size_layout
         )
 
         self.note_editor = QTextEdit()
@@ -295,12 +500,85 @@ class ShotBreakdownAssistant(QMainWindow):
             1
         )
 
-        splitter.addWidget(
+        upper_splitter.addWidget(
             shot_panel
         )
 
+        upper_splitter.setSizes(
+            [900, 400]
+        )
+
+        splitter.addWidget(
+            upper_splitter
+        )
+
+        # =====================================================
+        # 下方：縮圖時間軸
+        # =====================================================
+
+        thumbnail_panel = QWidget()
+
+        thumbnail_layout = QVBoxLayout(
+            thumbnail_panel
+        )
+
+        thumbnail_header = QHBoxLayout()
+
+        thumbnail_header.addWidget(
+            QLabel(
+                "🖼️ 縮圖時間軸"
+            )
+        )
+
+        self.thumbnail_count_label = QLabel(
+            "尚未產生縮圖"
+        )
+
+        thumbnail_header.addWidget(
+            self.thumbnail_count_label
+        )
+
+        thumbnail_header.addStretch()
+
+        thumbnail_layout.addLayout(
+            thumbnail_header
+        )
+
+        self.thumbnail_scroll = QScrollArea()
+
+        self.thumbnail_scroll.setWidgetResizable(
+            True
+        )
+
+        self.thumbnail_container = QWidget()
+
+        self.thumbnail_layout = QHBoxLayout(
+            self.thumbnail_container
+        )
+
+        self.thumbnail_layout.setAlignment(
+            Qt.AlignLeft
+        )
+
+        self.thumbnail_layout.setSpacing(
+            12
+        )
+
+        self.thumbnail_scroll.setWidget(
+            self.thumbnail_container
+        )
+
+        thumbnail_layout.addWidget(
+            self.thumbnail_scroll,
+            1
+        )
+
+        splitter.addWidget(
+            thumbnail_panel
+        )
+
         splitter.setSizes(
-            [800, 400]
+            [560, 280]
         )
 
         main_layout.addWidget(
@@ -313,12 +591,14 @@ class ShotBreakdownAssistant(QMainWindow):
         )
 
     # =========================================================
-    # 播放器
+    # Player
     # =========================================================
 
     def setup_player(self):
 
-        self.player = QMediaPlayer(self)
+        self.player = QMediaPlayer(
+            self
+        )
 
         self.audio_output = QAudioOutput(
             self
@@ -341,29 +621,87 @@ class ShotBreakdownAssistant(QMainWindow):
         )
 
     # =========================================================
+    # FFmpeg
+    # =========================================================
+
+    def get_ffmpeg_path(self):
+
+        candidates = [
+
+            Path(__file__).resolve()
+            .parent
+            / "ffmpeg"
+            / "ffmpeg.exe",
+
+            Path.cwd()
+            / "ffmpeg"
+            / "ffmpeg.exe",
+
+        ]
+
+        for path in candidates:
+
+            if path.exists():
+
+                return path
+
+        return None
+
+    def get_ffprobe_path(self):
+
+        candidates = [
+
+            Path(__file__).resolve()
+            .parent
+            / "ffmpeg"
+            / "ffprobe.exe",
+
+            Path.cwd()
+            / "ffmpeg"
+            / "ffprobe.exe",
+
+        ]
+
+        for path in candidates:
+
+            if path.exists():
+
+                return path
+
+        return None
+
+    # =========================================================
     # 開啟影片
     # =========================================================
 
     def open_video(self):
 
         path, _ = QFileDialog.getOpenFileName(
+
             self,
+
             "選擇影片",
+
             "",
+
             (
-                "影片 (*.mp4 *.mkv *.mov *.avi "
-                "*.webm *.m4v);;"
+                "影片 (*.mp4 *.mkv *.mov "
+                "*.avi *.webm *.m4v);;"
                 "所有檔案 (*.*)"
             ),
+
         )
 
         if not path:
+
             return
 
         self.video_path = path
 
         self.player.setSource(
-            QUrl.fromLocalFile(path)
+            QUrl.fromLocalFile(
+                path
+            )
         )
 
         self.video_name_label.setText(
@@ -372,6 +710,10 @@ class ShotBreakdownAssistant(QMainWindow):
 
         self.shots.clear()
 
+        self.current_shot_index = -1
+
+        self.clear_thumbnail_widgets()
+
         self.refresh_shot_list()
 
         self.statusBar().showMessage(
@@ -379,10 +721,10 @@ class ShotBreakdownAssistant(QMainWindow):
         )
 
     # =========================================================
-    # 建立時間點
+    # 產生縮圖
     # =========================================================
 
-    def generate_shots(self):
+    def generate_thumbnails(self):
 
         if not self.video_path:
 
@@ -394,13 +736,27 @@ class ShotBreakdownAssistant(QMainWindow):
 
             return
 
+        ffmpeg = self.get_ffmpeg_path()
+
+        if ffmpeg is None:
+
+            QMessageBox.critical(
+                self,
+                APP_NAME,
+                "找不到 FFmpeg。\n\n"
+                "請確認：\n"
+                "ffmpeg\\ffmpeg.exe"
+            )
+
+            return
+
         if self.duration_ms <= 0:
 
             QMessageBox.warning(
                 self,
                 APP_NAME,
                 "影片長度尚未讀取完成。\n"
-                "請稍候再按一次。"
+                "請稍候再試。"
             )
 
             return
@@ -410,26 +766,293 @@ class ShotBreakdownAssistant(QMainWindow):
             * 1000
         )
 
-        self.shots = []
+        self.thumbnail_dir = (
+            self.thumbnail_service.prepare_thumbnail_dir(
+                self.video_path
+            )
+        )
 
-        current = 0
+        # -----------------------------------------------------
+        # 清除舊資料
+        # -----------------------------------------------------
 
-        while current <= self.duration_ms:
+        self.thumbnail_service.clear_thumbnails(
+            self.thumbnail_dir
+        )
 
-            self.shots.append(
-                Shot(current)
+
+        self.shots.clear()
+
+        total = (
+            self.duration_ms
+            // interval
+        ) + 1
+
+        progress = QProgressDialog(
+            "正在產生影片縮圖……",
+            "取消",
+            0,
+            total,
+            self
+        )
+
+        progress.setWindowTitle(
+            "🎬 拉片助手"
+        )
+
+        progress.setWindowModality(
+            Qt.WindowModal
+        )
+
+        progress.show()
+
+        for index in range(total):
+
+            if progress.wasCanceled():
+
+                break
+
+            time_ms = (
+                index
+                * interval
             )
 
-            current += interval
+            if time_ms > self.duration_ms:
+
+                break
+
+            seconds = (
+                time_ms / 1000
+            )
+
+            output_file = (
+                self.thumbnail_dir
+                / f"{index:05d}.jpg"
+            )
+
+            try:
+
+                self.video_service.generate_thumbnail(
+                    self.video_path,
+                    time_ms,
+                    output_file
+                )
+
+                self.shots.append(
+                    Shot(
+                        time_ms,
+                        thumbnail=str(
+                            output_file
+                        )
+                    )
+                )
+
+            except Exception as error:
+
+                progress.close()
+
+                QMessageBox.critical(
+                    self,
+                    APP_NAME,
+                    "FFmpeg 執行失敗：\n\n"
+                    + str(error)
+                )
+
+                return
+
+
+                self.shots.append(
+                    Shot(
+                        time_ms,
+                        thumbnail=str(
+                            output_file
+                        )
+                    )
+                )
+
+            progress.setValue(
+                index + 1
+            )
+
+            QApplication.processEvents()
+
+        progress.close()
 
         self.refresh_shot_list()
 
+        self.refresh_thumbnail_timeline()
+
+        self.thumbnail_count_label.setText(
+            f"{len(self.shots)} 張縮圖"
+        )
+
         self.statusBar().showMessage(
-            f"已建立 {len(self.shots)} 個時間點"
+            f"完成：{len(self.shots)} 張縮圖"
         )
 
     # =========================================================
-    # 更新 SHOT 清單
+    # 縮圖時間軸
+    # =========================================================
+
+    def clear_thumbnail_widgets(self):
+
+        while (
+            self.thumbnail_layout.count()
+            > 0
+        ):
+
+            item = (
+                self.thumbnail_layout
+                .takeAt(0)
+            )
+
+            widget = item.widget()
+
+            if widget:
+
+                widget.deleteLater()
+
+    def refresh_thumbnail_timeline(self):
+
+        self.clear_thumbnail_widgets()
+
+        for index, shot in enumerate(
+            self.shots
+        ):
+
+            container = QWidget()
+
+            layout = QVBoxLayout(
+                container
+            )
+
+            layout.setContentsMargins(
+                2,
+                2,
+                2,
+                2
+            )
+
+            button = ThumbnailButton(
+                index,
+                shot
+            )
+
+            button.clicked.connect(
+                lambda checked=False,
+                i=index:
+                self.thumbnail_clicked(i)
+            )
+
+            if (
+                shot.thumbnail
+                and Path(
+                    shot.thumbnail
+                ).exists()
+            ):
+
+                pixmap = QPixmap(
+                    shot.thumbnail
+                )
+
+                if not pixmap.isNull():
+
+                    pixmap = pixmap.scaled(
+                        180,
+                        105,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+
+                    button.setIcon(
+                        pixmap
+                    )
+
+                    button.setIconSize(
+                        QSize(
+                            180,
+                            105
+                        )
+                    )
+
+            layout.addWidget(
+                button
+            )
+
+            time_label = QLabel(
+                f"SHOT {index + 1:03d}\n"
+                f"{format_time(shot.time_ms)}"
+            )
+
+            time_label.setAlignment(
+                Qt.AlignCenter
+            )
+
+            layout.addWidget(
+                time_label
+            )
+
+            self.thumbnail_layout.addWidget(
+                container
+            )
+
+    def thumbnail_clicked(
+        self,
+        index
+    ):
+
+        if index < 0:
+
+            return
+
+        if index >= len(
+            self.shots
+        ):
+
+            return
+
+        shot = self.shots[index]
+
+        self.player.setPosition(
+            shot.time_ms
+        )
+
+        self.shot_list.setCurrentRow(
+            index
+        )
+
+        self.current_shot_index = index
+
+    # =========================================================
+    # 清除縮圖
+    # =========================================================
+
+    def clear_thumbnails(self):
+
+        if not self.thumbnail_dir:
+
+            self.clear_thumbnail_widgets()
+
+            return
+
+        if self.thumbnail_dir.exists():
+
+            self.thumbnail_service.clear_thumbnails(
+                self.thumbnail_dir
+            )
+
+        self.clear_thumbnail_widgets()
+
+        self.thumbnail_count_label.setText(
+            "尚未產生縮圖"
+        )
+
+        self.statusBar().showMessage(
+            "縮圖已清除"
+        )
+
+    # =========================================================
+    # SHOT 清單
     # =========================================================
 
     def refresh_shot_list(self):
@@ -441,12 +1064,11 @@ class ShotBreakdownAssistant(QMainWindow):
         self.shot_list.clear()
 
         for index, shot in enumerate(
-            self.shots,
-            start=1
+            self.shots
         ):
 
             text = (
-                f"SHOT {index:03d}   "
+                f"SHOT {index + 1:03d}   "
                 f"{format_time(shot.time_ms)}"
             )
 
@@ -473,9 +1095,13 @@ class ShotBreakdownAssistant(QMainWindow):
     def select_shot(self, row):
 
         if row < 0:
+
             return
 
-        if row >= len(self.shots):
+        if row >= len(
+            self.shots
+        ):
+
             return
 
         self.current_shot_index = row
@@ -498,16 +1124,26 @@ class ShotBreakdownAssistant(QMainWindow):
             False
         )
 
+        # -----------------------------------------------------
+        # 更新景別按鈕
+        # -----------------------------------------------------
+
+        for button in self.shot_size_buttons:
+
+            button.setChecked(
+                button.text() == shot.shot_size
+            )
+
         self.shot_label.setText(
             f"SHOT {row + 1:03d}   "
             f"{format_time(shot.time_ms)}"
         )
 
     # =========================================================
-    # 筆記變更
+    # 景別
     # =========================================================
 
-    def note_changed(self):
+    def set_shot_size(self, value):
 
         index = self.current_shot_index
 
@@ -517,8 +1153,41 @@ class ShotBreakdownAssistant(QMainWindow):
         if index >= len(self.shots):
             return
 
+        self.shots[index].shot_size = value
+
+        for button in self.shot_size_buttons:
+
+            button.setChecked(
+                button.text() == value
+            )
+
+        self.refresh_shot_list()
+
+        self.shot_list.setCurrentRow(
+            index
+        )
+
+    # =========================================================
+    # 筆記
+    # =========================================================
+
+    def note_changed(self):
+
+        index = self.current_shot_index
+
+        if index < 0:
+
+            return
+
+        if index >= len(
+            self.shots
+        ):
+
+            return
+
         self.shots[index].note = (
-            self.note_editor.toPlainText()
+            self.note_editor
+            .toPlainText()
         )
 
         self.refresh_shot_list()
@@ -528,7 +1197,7 @@ class ShotBreakdownAssistant(QMainWindow):
         )
 
     # =========================================================
-    # 新增目前時間
+    # 新增 SHOT
     # =========================================================
 
     def add_current_shot(self):
@@ -548,7 +1217,9 @@ class ShotBreakdownAssistant(QMainWindow):
         )
 
         self.shots.append(
-            Shot(current_time)
+            Shot(
+                current_time
+            )
         )
 
         self.shots.sort(
@@ -558,17 +1229,17 @@ class ShotBreakdownAssistant(QMainWindow):
 
         self.refresh_shot_list()
 
-        for i, shot in enumerate(
-            self.shots
-        ):
-
-            if shot.time_ms == current_time:
-
-                self.shot_list.setCurrentRow(
-                    i
+        self.shot_list.setCurrentRow(
+            self.shots.index(
+                next(
+                    shot
+                    for shot
+                    in self.shots
+                    if shot.time_ms
+                    == current_time
                 )
-
-                break
+            )
+        )
 
     # =========================================================
     # 刪除 SHOT
@@ -581,9 +1252,12 @@ class ShotBreakdownAssistant(QMainWindow):
         )
 
         if row < 0:
+
             return
 
-        self.shots.pop(row)
+        self.shots.pop(
+            row
+        )
 
         self.current_shot_index = -1
 
@@ -591,8 +1265,10 @@ class ShotBreakdownAssistant(QMainWindow):
 
         self.refresh_shot_list()
 
+        self.refresh_thumbnail_timeline()
+
     # =========================================================
-    # 播放 / 暫停
+    # 播放
     # =========================================================
 
     def toggle_play(self):
@@ -620,13 +1296,19 @@ class ShotBreakdownAssistant(QMainWindow):
     # 時間軸
     # =========================================================
 
-    def seek_video(self, position):
+    def seek_video(
+        self,
+        position
+    ):
 
         self.player.setPosition(
             position
         )
 
-    def position_changed(self, position):
+    def position_changed(
+        self,
+        position
+    ):
 
         self.position_slider.blockSignals(
             True
@@ -645,7 +1327,10 @@ class ShotBreakdownAssistant(QMainWindow):
             f"{format_time(self.duration_ms)}"
         )
 
-    def duration_changed(self, duration):
+    def duration_changed(
+        self,
+        duration
+    ):
 
         self.duration_ms = duration
 
@@ -672,6 +1357,8 @@ class ShotBreakdownAssistant(QMainWindow):
 
         self.duration_ms = 0
 
+        self.thumbnail_dir = None
+
         self.player.stop()
 
         self.player.setSource(
@@ -682,8 +1369,14 @@ class ShotBreakdownAssistant(QMainWindow):
 
         self.note_editor.clear()
 
+        self.clear_thumbnail_widgets()
+
         self.video_name_label.setText(
             "尚未開啟影片"
+        )
+
+        self.thumbnail_count_label.setText(
+            "尚未產生縮圖"
         )
 
         self.time_label.setText(
@@ -711,47 +1404,93 @@ class ShotBreakdownAssistant(QMainWindow):
             return
 
         path, _ = QFileDialog.getSaveFileName(
+
             self,
+
             "儲存拉片專案",
+
             (
-                Path(self.video_path).stem
+                Path(
+                    self.video_path
+                ).stem
                 + ".shotproj.json"
             ),
+
             "拉片專案 (*.shotproj.json)",
+
         )
 
         if not path:
+
             return
 
-        data = {
+        try:
 
-            "version": 1,
+            data = {
 
-            "video_path":
-                self.video_path,
+                "version": 12,
 
-            "interval_seconds":
-                self.interval_spin.value(),
+                "video_path":
+                    self.video_path,
 
-            "shots":
-                [
-                    shot.to_dict()
-                    for shot in self.shots
-                ],
-        }
+                "interval_seconds":
+                    self.interval_spin.value(),
 
-        Path(path).write_text(
-            json.dumps(
+                "shots":
+                    [
+                        shot.to_dict()
+                        for shot
+                        in self.shots
+                    ],
+
+            }
+
+            json_text = json.dumps(
                 data,
                 ensure_ascii=False,
                 indent=2
-            ),
-            encoding="utf-8"
-        )
+            )
 
-        self.statusBar().showMessage(
-            "專案已儲存"
-        )
+            save_path = Path(path)
+
+            save_path.write_text(
+                json_text,
+                encoding="utf-8"
+            )
+
+            if not save_path.exists():
+
+                raise RuntimeError(
+                    "write_text 執行完成，但找不到輸出的檔案。"
+                )
+
+            QMessageBox.information(
+
+                self,
+
+                APP_NAME,
+
+                "專案已成功儲存！\n\n"
+                + str(save_path)
+
+            )
+
+            self.statusBar().showMessage(
+                "專案已儲存"
+            )
+
+        except Exception as error:
+
+            QMessageBox.critical(
+
+                self,
+
+                APP_NAME,
+
+                "儲存專案失敗：\n\n"
+                + repr(error)
+
+            )
 
     # =========================================================
     # 載入專案
@@ -760,21 +1499,29 @@ class ShotBreakdownAssistant(QMainWindow):
     def load_project(self):
 
         path, _ = QFileDialog.getOpenFileName(
+
             self,
+
             "載入拉片專案",
+
             "",
+
             "拉片專案 (*.shotproj.json)"
+
         )
 
         if not path:
+
             return
 
         try:
 
             data = json.loads(
+
                 Path(path).read_text(
                     encoding="utf-8"
                 )
+
             )
 
             video_path = data.get(
@@ -787,10 +1534,15 @@ class ShotBreakdownAssistant(QMainWindow):
             ).exists():
 
                 QMessageBox.warning(
+
                     self,
+
                     APP_NAME,
-                    "原本的影片找不到。\n"
-                    "請重新開啟影片後再使用專案。"
+
+                    "原本的影片找不到。\n\n"
+                    "請確認影片仍然存在：\n"
+                    + video_path
+
                 )
 
                 return
@@ -798,38 +1550,75 @@ class ShotBreakdownAssistant(QMainWindow):
             self.video_path = video_path
 
             self.interval_spin.setValue(
+
                 int(
                     data.get(
                         "interval_seconds",
                         3
                     )
                 )
+
             )
 
             self.shots = [
 
-                Shot.from_dict(item)
+                Shot.from_dict(
+                    item
+                )
 
                 for item
                 in data.get(
                     "shots",
                     []
                 )
+
             ]
 
             self.player.setSource(
+
                 QUrl.fromLocalFile(
                     self.video_path
                 )
+
             )
 
             self.video_name_label.setText(
+
                 Path(
                     self.video_path
                 ).name
+
             )
 
+            if self.shots:
+
+                first_thumbnail = (
+                    self.shots[0]
+                    .thumbnail
+                )
+
+                if first_thumbnail:
+
+                    self.thumbnail_dir = (
+                        Path(
+                            first_thumbnail
+                        ).parent
+                    )
+
             self.refresh_shot_list()
+
+            self.refresh_thumbnail_timeline()
+
+            self.thumbnail_count_label.setText(
+
+                f"{len(self.shots)} 張縮圖"
+
+                if self.shots
+
+                else
+                "尚未產生縮圖"
+
+            )
 
             self.statusBar().showMessage(
                 "專案已載入"
@@ -838,10 +1627,14 @@ class ShotBreakdownAssistant(QMainWindow):
         except Exception as error:
 
             QMessageBox.critical(
+
                 self,
+
                 APP_NAME,
+
                 "載入失敗：\n\n"
                 + str(error)
+
             )
 
     # =========================================================
@@ -853,9 +1646,13 @@ class ShotBreakdownAssistant(QMainWindow):
         if not self.video_path:
 
             QMessageBox.warning(
+
                 self,
+
                 APP_NAME,
+
                 "請先開啟影片。"
+
             )
 
             return
@@ -863,28 +1660,40 @@ class ShotBreakdownAssistant(QMainWindow):
         if not self.shots:
 
             QMessageBox.warning(
+
                 self,
+
                 APP_NAME,
+
                 "目前沒有 SHOT。"
+
             )
 
             return
 
         default_name = (
+
             Path(
                 self.video_path
             ).stem
             + "_拉片.md"
+
         )
 
         path, _ = QFileDialog.getSaveFileName(
+
             self,
+
             "匯出 Obsidian Markdown",
+
             default_name,
+
             "Markdown (*.md)"
+
         )
 
         if not path:
+
             return
 
         title = Path(
@@ -900,7 +1709,8 @@ class ShotBreakdownAssistant(QMainWindow):
         lines.append("")
 
         lines.append(
-            f"> 來源影片：`{Path(self.video_path).name}`"
+            f"> 來源影片："
+            f"`{Path(self.video_path).name}`"
         )
 
         lines.append("")
@@ -922,6 +1732,15 @@ class ShotBreakdownAssistant(QMainWindow):
             )
 
             lines.append("")
+
+            if shot.thumbnail:
+
+                lines.append(
+                    f"**縮圖：** "
+                    f"`{Path(shot.thumbnail).name}`"
+                )
+
+                lines.append("")
 
             lines.append(
                 "### 我的觀察"
@@ -948,15 +1767,22 @@ class ShotBreakdownAssistant(QMainWindow):
             lines.append("")
 
         Path(path).write_text(
+
             "\n".join(lines),
+
             encoding="utf-8"
+
         )
 
         QMessageBox.information(
+
             self,
+
             APP_NAME,
+
             "Obsidian Markdown 匯出完成！\n\n"
             + path
+
         )
 
         self.statusBar().showMessage(
@@ -964,19 +1790,19 @@ class ShotBreakdownAssistant(QMainWindow):
         )
 
 
-# =============================================================
-# 程式入口
-# =============================================================
-
 def main():
 
-    app = QApplication(sys.argv)
+    app = QApplication(
+        sys.argv
+    )
 
     app.setApplicationName(
         APP_NAME
     )
 
-    window = ShotBreakdownAssistant()
+    window = (
+        ShotBreakdownAssistant()
+    )
 
     window.show()
 
@@ -986,4 +1812,6 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
+
