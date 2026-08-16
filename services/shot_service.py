@@ -1,13 +1,18 @@
-﻿class ShotService:
+﻿from core.shot import Shot
+
+
+class ShotService:
 
     def add_shot(
         self,
         shots,
-        time_ms
+        time_ms,
+        thumbnail=""
     ):
-        from core.shot import Shot
-
-        shot = Shot(time_ms)
+        shot = Shot(
+            time_ms,
+            thumbnail=thumbnail
+        )
 
         shots.append(shot)
 
@@ -44,6 +49,20 @@
             return
 
         shots[index].note = note
+
+    def update_shot_size(
+        self,
+        shots,
+        index,
+        shot_size
+    ):
+        if index < 0:
+            return
+
+        if index >= len(shots):
+            return
+
+        shots[index].shot_size = shot_size
 
     def sort_shots(
         self,

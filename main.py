@@ -758,13 +758,10 @@ class ShotBreakdownAssistant(
                     output_file
                 )
 
-                self.shots.append(
-                    Shot(
-                        time_ms,
-                        thumbnail=str(
-                            output_file
-                        )
-                    )
+                self.shot_service.add_shot(
+                    self.shots,
+                    time_ms,
+                    thumbnail=str(output_file)
                 )
 
             except Exception as error:
@@ -779,16 +776,6 @@ class ShotBreakdownAssistant(
                 )
 
                 return
-
-
-                self.shots.append(
-                    Shot(
-                        time_ms,
-                        thumbnail=str(
-                            output_file
-                        )
-                    )
-                )
 
             progress.setValue(
                 index + 1
@@ -1073,7 +1060,11 @@ class ShotBreakdownAssistant(
         if index >= len(self.shots):
             return
 
-        self.shots[index].shot_size = value
+        self.shot_service.update_shot_size(
+            self.shots,
+            index,
+            value
+        )
 
         for button in self.shot_size_buttons:
 
