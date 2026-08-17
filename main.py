@@ -1,8 +1,9 @@
-import sys
+﻿import sys
+import cv2
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl, QSize
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImage
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -11,59 +12,27 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
     QLabel,
-    QSlider,
-    QTextEdit,
-    QListWidget,
-    QListWidgetItem,
     QSpinBox,
     QSplitter,
     QMessageBox,
     QFileDialog,
-    QScrollArea,
     QProgressDialog,
 )
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PySide6.QtMultimediaWidgets import QVideoWidget
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QVideoSink, QVideoFrame
 
 from services.video_service import VideoService
 from services.thumbnail_service import ThumbnailService
-from services.project_service import ProjectService
 from services.shot_service import ShotService
-from services.obsidian_service import ObsidianService
-from core.shot import Shot
 from core.time import format_time
+from core.project_state import ProjectState
+from controllers.playback_controller import PlaybackController
+from controllers.project_controller import ProjectController
+from widgets.thumbnail_timeline import ThumbnailTimeline
+from widgets.shot_panel import ShotPanel
+from widgets.video_panel import VideoPanel
 
 
 APP_NAME = "🎬 拉片助手 v1.2"
-
-
-class ThumbnailButton(QPushButton):
-
-    def __init__(
-        self,
-        shot_index,
-        shot,
-        parent=None
-    ):
-
-        super().__init__(parent)
-
-        self.shot_index = shot_index
-        self.shot = shot
-
-        self.setFixedSize(
-            190,
-            145
-        )
-
-        self.setCursor(
-            Qt.PointingHandCursor
-        )
-
-        self.setToolTip(
-            f"SHOT {shot_index + 1:03d}\n"
-            f"{format_time(shot.time_ms)}"
-        )
 
 
 class ShotBreakdownAssistant(
@@ -83,15 +52,7 @@ class ShotBreakdownAssistant(
             850
         )
 
-        self.video_path = ""
-
-        self.duration_ms = 0
-
-        self.shots = []
-
-        self.current_shot_index = -1
-
-        self.thumbnail_dir = None
+        self.project_state = ProjectState()
 
         self.video_service = VideoService()
 
@@ -99,15 +60,162 @@ class ShotBreakdownAssistant(
             self.video_service
         )
 
-        self.project_service = ProjectService()
-
         self.shot_service = ShotService()
-
-        self.obsidian_service = ObsidianService()
+        self.project_controller = ProjectController()
 
         self.build_ui()
 
         self.setup_player()
+
+        self.setup_shortcuts()
+
+    @property
+    def video_path(self):
+        return self.project_state.video_path
+
+    @video_path.setter
+    def video_path(self, value):
+        self.project_state.video_path = value
+
+    @property
+    def duration_ms(self):
+        return self.project_state.duration_ms
+
+    @duration_ms.setter
+    def duration_ms(self, value):
+        self.project_state.duration_ms = value
+
+    @property
+    def shots(self):
+        return self.project_state.shots
+
+    @shots.setter
+    def shots(self, value):
+        self.project_state.shots = value
+
+    @property
+    def current_shot_index(self):
+        return self.project_state.current_shot_index
+
+    @current_shot_index.setter
+    def current_shot_index(self, value):
+        self.project_state.current_shot_index = value
+
+    @property
+    def thumbnail_dir(self):
+        return self.project_state.thumbnail_dir
+
+    @thumbnail_dir.setter
+    def thumbnail_dir(self, value):
+        self.project_state.thumbnail_dir = value
+
+    # =========================================================
+    # 鍵盤快捷鍵
+    # =========================================================
+
+    def setup_shortcuts(self):
+
+        self.shortcut_play = QShortcut(
+            QKeySequence("Space"),
+            self
+        )
+
+        self.shortcut_play.activated.connect(
+            self.toggle_play
+        )
+
+        self.shortcut_back = QShortcut(
+            QKeySequence("Left"),
+            self
+        )
+
+        self.shortcut_back.activated.connect(
+            lambda: self.seek_relative(-1000)
+        )
+
+        self.shortcut_forward = QShortcut(
+            QKeySequence("Right"),
+            self
+        )
+
+        self.shortcut_forward.activated.connect(
+            lambda: self.seek_relative(1000)
+        )
+        self.shortcut_back_5 = QShortcut(
+            QKeySequence("Shift+Left"),
+            self
+        )
+
+        self.shortcut_back_5.activated.connect(
+            lambda: self.seek_relative(-5000)
+        )
+
+        self.shortcut_forward_5 = QShortcut(
+            QKeySequence("Shift+Right"),
+            self
+        )
+
+        self.shortcut_forward_5.activated.connect(
+            lambda: self.seek_relative(5000)
+        )
+
+
+
+        self.shortcut_j = QShortcut(
+            QKeySequence("J"),
+            self
+        )
+
+        self.shortcut_j.activated.connect(
+            self.play_backward
+        )
+
+        self.shortcut_k = QShortcut(
+            QKeySequence("K"),
+            self
+        )
+
+        self.shortcut_k.activated.connect(
+            self.toggle_play
+        )
+
+        self.shortcut_l = QShortcut(
+            QKeySequence("L"),
+            self
+        )
+
+        self.shortcut_l.activated.connect(
+            self.play_forward
+        )
+    # =========================================================
+    # 影片相對移動
+    # =========================================================
+
+    def play_backward(self):
+        self.playback_controller.play_backward()
+
+        self.statusBar().showMessage(
+            "J：倒播 " + str(self.playback_controller.forward_speed)
+        )
+
+    def play_forward(self):
+        self.playback_controller.play_forward()
+
+        self.video_panel.set_playing(True)
+
+        self.statusBar().showMessage(
+            f"播放速度：{self.playback_controller.forward_speed:g}"
+        )
+
+    def increase_playback_speed(self):
+        self.playback_controller.increase_playback_speed()
+
+        self.statusBar().showMessage(
+            f"播放速度：{self.playback_controller.forward_speed:g}"
+        )
+
+    def seek_relative(self, offset_ms):
+        self.playback_controller.seek_relative(offset_ms)
 
     # =========================================================
     # UI
@@ -264,201 +372,33 @@ class ShotBreakdownAssistant(
         # 影片
         # -----------------------------------------------------
 
-        video_panel = QWidget()
-
-        video_layout = QVBoxLayout(
-            video_panel
-        )
-
-        self.video_widget = QVideoWidget()
-
-        video_layout.addWidget(
-            self.video_widget,
-            1
-        )
-
-        controls = QHBoxLayout()
-
-        self.play_button = QPushButton(
-            "▶ 播放"
-        )
-
-        self.play_button.clicked.connect(
-            self.toggle_play
-        )
-
-        self.position_slider = QSlider(
-            Qt.Horizontal
-        )
-
-        self.position_slider.setRange(
-            0,
-            0
-        )
-
-        self.position_slider.sliderMoved.connect(
-            self.seek_video
-        )
-
-        self.time_label = QLabel(
-            "00:00:00.000 / 00:00:00.000"
-        )
-
-        controls.addWidget(
-            self.play_button
-        )
-
-        controls.addWidget(
-            self.position_slider,
-            1
-        )
-
-        controls.addWidget(
-            self.time_label
-        )
-
-        video_layout.addLayout(
-            controls
-        )
-
-        self.video_name_label = QLabel(
-            "尚未開啟影片"
-        )
-
-        video_layout.addWidget(
-            self.video_name_label
-        )
+        self.video_panel = VideoPanel()
+        self.video_panel.play_requested.connect(self.toggle_play)
+        self.video_panel.seek_requested.connect(self.seek_video)
 
         upper_splitter.addWidget(
-            video_panel
+            self.video_panel
         )
 
         # -----------------------------------------------------
         # SHOT 清單
         # -----------------------------------------------------
 
-        shot_panel = QWidget()
+        self.shot_panel = ShotPanel()
+        self.shot_panel.shot_selected.connect(self.select_shot)
+        self.shot_panel.add_requested.connect(self.add_current_shot)
+        self.shot_panel.delete_requested.connect(self.delete_current_shot)
+        self.shot_panel.shot_size_changed.connect(self.set_shot_size)
+        self.shot_panel.note_changed.connect(self.note_changed)
 
-        shot_layout = QVBoxLayout(
-            shot_panel
-        )
-
-        shot_layout.addWidget(
-            QLabel("🎞️ SHOT")
-        )
-
-        self.shot_list = QListWidget()
-
-        self.shot_list.currentRowChanged.connect(
-            self.select_shot
-        )
-
-        shot_layout.addWidget(
-            self.shot_list,
-            1
-        )
-
-        shot_buttons = QHBoxLayout()
-
-        self.add_shot_button = QPushButton(
-            "✂️ 目前時間新增"
-        )
-
-        self.add_shot_button.clicked.connect(
-            self.add_current_shot
-        )
-
-        self.delete_shot_button = QPushButton(
-            "🗑️ 刪除"
-        )
-
-        self.delete_shot_button.clicked.connect(
-            self.delete_current_shot
-        )
-
-        shot_buttons.addWidget(
-            self.add_shot_button
-        )
-
-        shot_buttons.addWidget(
-            self.delete_shot_button
-        )
-
-        shot_layout.addLayout(
-            shot_buttons
-        )
-
-        self.shot_label = QLabel(
-            "尚未選擇 SHOT"
-        )
-
-        shot_layout.addWidget(
-            self.shot_label
-        )
-
-        # =====================================================
-        # v1.2：景別
-        # =====================================================
-
-        shot_layout.addWidget(
-            QLabel(" 景別")
-        )
-
-        self.shot_size_buttons = []
-
-        shot_size_layout = QHBoxLayout()
-
-        for text in [
-            "大特寫",
-            "特寫",
-            "中景",
-            "全景",
-            "大全景"
-        ]:
-
-            button = QPushButton(
-                text
-            )
-
-            button.setCheckable(
-                True
-            )
-
-            button.clicked.connect(
-                lambda checked=False,
-                value=text:
-                self.set_shot_size(value)
-            )
-
-            self.shot_size_buttons.append(
-                button
-            )
-
-            shot_size_layout.addWidget(
-                button
-            )
-
-        shot_layout.addLayout(
-            shot_size_layout
-        )
-
-        self.note_editor = QTextEdit()
-
-        self.note_editor.setPlaceholderText(
-            "在這裡寫你的拉片觀察……"
-        )
-
-        self.note_editor.textChanged.connect(
-            self.note_changed
-        )
-
-        shot_layout.addWidget(
-            self.note_editor,
-            1
-        )
+        # Temporary aliases keep the controller code focused on application state.
+        self.shot_list = self.shot_panel.shot_list
+        self.note_editor = self.shot_panel.note_editor
+        self.shot_label = self.shot_panel.shot_label
+        self.shot_size_buttons = self.shot_panel.shot_size_buttons
 
         upper_splitter.addWidget(
-            shot_panel
+            self.shot_panel
         )
 
         upper_splitter.setSizes(
@@ -473,66 +413,11 @@ class ShotBreakdownAssistant(
         # 下方：縮圖時間軸
         # =====================================================
 
-        thumbnail_panel = QWidget()
+        self.thumbnail_timeline = ThumbnailTimeline()
+        self.thumbnail_timeline.shot_selected.connect(self.thumbnail_clicked)
+        self.thumbnail_count_label = self.thumbnail_timeline.count_label
 
-        thumbnail_layout = QVBoxLayout(
-            thumbnail_panel
-        )
-
-        thumbnail_header = QHBoxLayout()
-
-        thumbnail_header.addWidget(
-            QLabel(
-                "🖼️ 縮圖時間軸"
-            )
-        )
-
-        self.thumbnail_count_label = QLabel(
-            "尚未產生縮圖"
-        )
-
-        thumbnail_header.addWidget(
-            self.thumbnail_count_label
-        )
-
-        thumbnail_header.addStretch()
-
-        thumbnail_layout.addLayout(
-            thumbnail_header
-        )
-
-        self.thumbnail_scroll = QScrollArea()
-
-        self.thumbnail_scroll.setWidgetResizable(
-            True
-        )
-
-        self.thumbnail_container = QWidget()
-
-        self.thumbnail_layout = QHBoxLayout(
-            self.thumbnail_container
-        )
-
-        self.thumbnail_layout.setAlignment(
-            Qt.AlignLeft
-        )
-
-        self.thumbnail_layout.setSpacing(
-            12
-        )
-
-        self.thumbnail_scroll.setWidget(
-            self.thumbnail_container
-        )
-
-        thumbnail_layout.addWidget(
-            self.thumbnail_scroll,
-            1
-        )
-
-        splitter.addWidget(
-            thumbnail_panel
-        )
+        splitter.addWidget(self.thumbnail_timeline)
 
         splitter.setSizes(
             [560, 280]
@@ -566,7 +451,15 @@ class ShotBreakdownAssistant(
         )
 
         self.player.setVideoOutput(
-            self.video_widget
+            self.video_panel.video_widget
+        )
+
+        self.video_sink = (
+            self.video_panel.video_widget.videoSink()
+        )
+
+        self.video_sink.videoFrameChanged.connect(
+            self.video_frame_changed
         )
 
         self.player.positionChanged.connect(
@@ -575,6 +468,15 @@ class ShotBreakdownAssistant(
 
         self.player.durationChanged.connect(
             self.duration_changed
+        )
+
+        self.playback_controller = PlaybackController(
+            self.player,
+            lambda: self.duration_ms,
+        )
+
+        self.video_panel.speed_changed.connect(
+            self.playback_controller.set_playback_speed
         )
 
     # =========================================================
@@ -605,15 +507,9 @@ class ShotBreakdownAssistant(
 
         try:
 
-            self.video_path = path
+            self.project_state = self.project_controller.open_video(path)
 
-            self.shots.clear()
-
-            self.current_shot_index = -1
-
-            self.thumbnail_dir = None
-
-            self.note_editor.clear()
+            self.shot_panel.clear_details()
 
             self.player.setSource(
 
@@ -623,13 +519,7 @@ class ShotBreakdownAssistant(
 
             )
 
-            self.video_name_label.setText(
-
-                Path(
-                    self.video_path
-                ).name
-
-            )
+            self.video_panel.set_video_name(Path(self.video_path).name)
 
             self.thumbnail_count_label.setText(
                 "尚未產生縮圖"
@@ -797,106 +687,10 @@ class ShotBreakdownAssistant(
     # =========================================================
 
     def clear_thumbnail_widgets(self):
-
-        while (
-            self.thumbnail_layout.count()
-            > 0
-        ):
-
-            item = (
-                self.thumbnail_layout
-                .takeAt(0)
-            )
-
-            widget = item.widget()
-
-            if widget:
-
-                widget.deleteLater()
+        self.thumbnail_timeline.clear()
 
     def refresh_thumbnail_timeline(self):
-
-        self.clear_thumbnail_widgets()
-
-        for index, shot in enumerate(
-            self.shots
-        ):
-
-            container = QWidget()
-
-            layout = QVBoxLayout(
-                container
-            )
-
-            layout.setContentsMargins(
-                2,
-                2,
-                2,
-                2
-            )
-
-            button = ThumbnailButton(
-                index,
-                shot
-            )
-
-            button.clicked.connect(
-                lambda checked=False,
-                i=index:
-                self.thumbnail_clicked(i)
-            )
-
-            if (
-                shot.thumbnail
-                and Path(
-                    shot.thumbnail
-                ).exists()
-            ):
-
-                pixmap = QPixmap(
-                    shot.thumbnail
-                )
-
-                if not pixmap.isNull():
-
-                    pixmap = pixmap.scaled(
-                        180,
-                        105,
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation
-                    )
-
-                    button.setIcon(
-                        pixmap
-                    )
-
-                    button.setIconSize(
-                        QSize(
-                            180,
-                            105
-                        )
-                    )
-
-            layout.addWidget(
-                button
-            )
-
-            time_label = QLabel(
-                f"SHOT {index + 1:03d}\n"
-                f"{format_time(shot.time_ms)}"
-            )
-
-            time_label.setAlignment(
-                Qt.AlignCenter
-            )
-
-            layout.addWidget(
-                time_label
-            )
-
-            self.thumbnail_layout.addWidget(
-                container
-            )
+        self.thumbnail_timeline.set_shots(self.shots)
 
     def thumbnail_clicked(
         self,
@@ -958,37 +752,7 @@ class ShotBreakdownAssistant(
     # =========================================================
 
     def refresh_shot_list(self):
-
-        self.shot_list.blockSignals(
-            True
-        )
-
-        self.shot_list.clear()
-
-        for index, shot in enumerate(
-            self.shots
-        ):
-
-            text = (
-                f"SHOT {index + 1:03d}   "
-                f"{format_time(shot.time_ms)}"
-            )
-
-            if shot.note.strip():
-
-                text += "   📝"
-
-            item = QListWidgetItem(
-                text
-            )
-
-            self.shot_list.addItem(
-                item
-            )
-
-        self.shot_list.blockSignals(
-            False
-        )
+        self.shot_panel.set_shots(self.shots)
 
     # =========================================================
     # 選擇 SHOT
@@ -1014,32 +778,7 @@ class ShotBreakdownAssistant(
             shot.time_ms
         )
 
-        self.note_editor.blockSignals(
-            True
-        )
-
-        self.note_editor.setPlainText(
-            shot.note
-        )
-
-        self.note_editor.blockSignals(
-            False
-        )
-
-        # -----------------------------------------------------
-        # 更新景別按鈕
-        # -----------------------------------------------------
-
-        for button in self.shot_size_buttons:
-
-            button.setChecked(
-                button.text() == shot.shot_size
-            )
-
-        self.shot_label.setText(
-            f"SHOT {row + 1:03d}   "
-            f"{format_time(shot.time_ms)}"
-        )
+        self.shot_panel.show_shot(row, shot)
 
     # =========================================================
     # 景別
@@ -1061,11 +800,7 @@ class ShotBreakdownAssistant(
             value
         )
 
-        for button in self.shot_size_buttons:
-
-            button.setChecked(
-                button.text() == value
-            )
+        self.shot_panel.show_shot(index, self.shots[index])
 
         self.refresh_shot_list()
 
@@ -1163,7 +898,10 @@ class ShotBreakdownAssistant(
 
         self.current_shot_index = -1
 
-        self.note_editor.clear()
+
+
+
+        self.shot_panel.clear_details()
 
         self.refresh_shot_list()
 
@@ -1173,7 +911,126 @@ class ShotBreakdownAssistant(
     # 播放
     # =========================================================
 
+    def keyPressEvent(self, event):
+
+        if event.key() == Qt.Key_J:
+
+            if not event.isAutoRepeat():
+
+                if self.playback_controller.reverse_timer.isActive():
+
+                    self.playback_controller.reverse_timer.stop()
+
+                    self.video_panel.hide_preview()
+
+                else:
+
+                    self.play_backward()
+
+            event.accept()
+            return
+
+        if event.key() == Qt.Key_L:
+
+            if not event.isAutoRepeat():
+
+                if self.playback_controller.forward_timer.isActive():
+
+                    self.playback_controller.forward_timer.stop()
+
+                else:
+
+                    self.play_forward()
+
+            event.accept()
+            return
+
+        if event.key() == Qt.Key_K:
+
+            if not event.isAutoRepeat():
+
+                self.playback_controller.reverse_timer.stop()
+                self.playback_controller.forward_timer.stop()
+
+                self.player.pause()
+
+                self.video_panel.set_playing(False)
+
+                self.statusBar().showMessage(
+                    "已停止播放"
+                )
+
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+
+        if event.key() == Qt.Key_J:
+
+            event.accept()
+            return
+
+        if event.key() == Qt.Key_L:
+
+            event.accept()
+            return
+
+        super().keyReleaseEvent(event)
+    def show_preview_frame(self, frame):
+
+        if frame is None:
+            return
+
+        frame = cv2.cvtColor(
+            frame,
+            cv2.COLOR_BGR2RGB
+        )
+
+        height, width, channels = frame.shape
+
+        image = QImage(
+            frame.data,
+            width,
+            height,
+            channels * width,
+            QImage.Format_RGB888
+        ).copy()
+
+        pixmap = QPixmap.fromImage(
+            image
+        )
+
+        self.video_panel.show_preview(pixmap)
+    def video_frame_changed(self, frame):
+
+
+        if frame.isValid():
+
+            self.video_panel.refresh_video_frame()
+
     def toggle_play(self):
+
+        if self.playback_controller.reverse_timer.isActive():
+
+            self.playback_controller.reverse_timer.stop()
+
+            self.player.pause()
+
+            self.video_panel.set_playing(False)
+
+            return
+
+        if self.playback_controller.forward_timer.isActive():
+
+            self.playback_controller.forward_timer.stop()
+
+            self.player.pause()
+
+            self.video_panel.set_playing(False)
+
+            return
 
         if (
             self.player.playbackState()
@@ -1182,21 +1039,13 @@ class ShotBreakdownAssistant(
 
             self.player.pause()
 
-            self.play_button.setText(
-                "▶ 播放"
-            )
+            self.video_panel.set_playing(False)
 
         else:
 
             self.player.play()
 
-            self.play_button.setText(
-                "⏸ 暫停"
-            )
-
-    # =========================================================
-    # 時間軸
-    # =========================================================
+            self.video_panel.set_playing(True)
 
     def seek_video(
         self,
@@ -1212,22 +1061,7 @@ class ShotBreakdownAssistant(
         position
     ):
 
-        self.position_slider.blockSignals(
-            True
-        )
-
-        self.position_slider.setValue(
-            position
-        )
-
-        self.position_slider.blockSignals(
-            False
-        )
-
-        self.time_label.setText(
-            f"{format_time(position)} / "
-            f"{format_time(self.duration_ms)}"
-        )
+        self.video_panel.set_position(position, self.duration_ms)
 
     def duration_changed(
         self,
@@ -1236,10 +1070,7 @@ class ShotBreakdownAssistant(
 
         self.duration_ms = duration
 
-        self.position_slider.setRange(
-            0,
-            duration
-        )
+        self.video_panel.set_duration(duration)
 
         self.position_changed(
             self.player.position()
@@ -1251,15 +1082,9 @@ class ShotBreakdownAssistant(
 
     def new_project(self):
 
-        self.video_path = ""
+        self.playback_controller.stop()
 
-        self.shots.clear()
-
-        self.current_shot_index = -1
-
-        self.duration_ms = 0
-
-        self.thumbnail_dir = None
+        self.project_state = self.project_controller.new_project()
 
         self.player.stop()
 
@@ -1267,23 +1092,17 @@ class ShotBreakdownAssistant(
             QUrl()
         )
 
-        self.shot_list.clear()
-
-        self.note_editor.clear()
+        self.shot_panel.set_shots([])
+        self.shot_panel.clear_details()
 
         self.clear_thumbnail_widgets()
 
-        self.video_name_label.setText(
-            "尚未開啟影片"
-        )
+        self.video_panel.reset()
 
         self.thumbnail_count_label.setText(
             "尚未產生縮圖"
         )
 
-        self.time_label.setText(
-            "00:00:00.000 / 00:00:00.000"
-        )
 
         self.statusBar().showMessage(
             "已建立新專案"
@@ -1330,10 +1149,9 @@ class ShotBreakdownAssistant(
 
             save_path = Path(path)
 
-            self.project_service.save(
-                self.video_path,
+            self.project_controller.save_project(
+                self.project_state,
                 self.interval_spin.value(),
-                self.shots,
                 save_path
             )
 
@@ -1389,11 +1207,8 @@ class ShotBreakdownAssistant(
 
         try:
 
-            data = self.project_service.load(
-                path
-            )
-
-            video_path = data["video_path"]
+            state, interval_seconds = self.project_controller.load_project(path)
+            video_path = state.video_path
 
             if not Path(
                 video_path
@@ -1413,13 +1228,9 @@ class ShotBreakdownAssistant(
 
                 return
 
-            self.video_path = video_path
+            self.project_state = state
 
-            self.interval_spin.setValue(
-                data["interval_seconds"]
-            )
-
-            self.shots = data["shots"]
+            self.interval_spin.setValue(interval_seconds)
 
             self.player.setSource(
 
@@ -1429,28 +1240,7 @@ class ShotBreakdownAssistant(
 
             )
 
-            self.video_name_label.setText(
-
-                Path(
-                    self.video_path
-                ).name
-
-            )
-
-            if self.shots:
-
-                first_thumbnail = (
-                    self.shots[0]
-                    .thumbnail
-                )
-
-                if first_thumbnail:
-
-                    self.thumbnail_dir = (
-                        Path(
-                            first_thumbnail
-                        ).parent
-                    )
+            self.video_panel.set_video_name(Path(self.video_path).name)
 
             self.refresh_shot_list()
 
@@ -1545,11 +1335,7 @@ class ShotBreakdownAssistant(
 
         try:
 
-            self.obsidian_service.export_markdown(
-                self.video_path,
-                self.shots,
-                path
-            )
+            self.project_controller.export_obsidian(self.project_state, path)
 
         except Exception as error:
 
@@ -1602,4 +1388,107 @@ def main():
 if __name__ == "__main__":
 
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

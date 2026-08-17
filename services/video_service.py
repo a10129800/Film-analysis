@@ -97,3 +97,102 @@ class VideoService:
             )
 
         return output_file
+    def open_video(self, video_path):
+        import cv2
+
+        self.close_video()
+
+        self._reverse_cap = cv2.VideoCapture(
+            str(video_path)
+        )
+
+        if not self._reverse_cap.isOpened():
+            self._reverse_cap = None
+            raise RuntimeError(
+                "OpenCV 無法開啟影片。"
+            )
+
+        self._reverse_video_path = str(video_path)
+
+        return self._reverse_cap
+
+
+    def close_video(self):
+
+        cap = getattr(
+            self,
+            "_reverse_cap",
+            None
+        )
+
+        if cap is not None:
+            cap.release()
+
+        self._reverse_cap = None
+        self._reverse_video_path = None
+
+
+    def get_frame_at(self, video_path, time_ms):
+        import cv2
+
+        cap = getattr(
+            self,
+            "_reverse_cap",
+            None
+        )
+
+        if (
+            cap is None
+            or getattr(
+                self,
+                "_reverse_video_path",
+                None
+            ) != str(video_path)
+        ):
+            cap = self.open_video(
+                video_path
+            )
+
+        cap.set(
+            cv2.CAP_PROP_POS_MSEC,
+            time_ms
+        )
+
+        success, frame = cap.read()
+
+        if not success:
+            return None
+
+        return frame
+
+    def get_frame(
+        self,
+        video_path,
+        time_ms
+    ):
+        import cv2
+
+        cap = cv2.VideoCapture(
+            str(video_path)
+        )
+
+        if not cap.isOpened():
+            raise RuntimeError(
+                "OpenCV 無法開啟影片。"
+            )
+
+        cap.set(
+            cv2.CAP_PROP_POS_MSEC,
+            time_ms
+        )
+
+        success, frame = cap.read()
+
+        cap.release()
+
+        if not success:
+            return None
+
+        return frame
+
+
